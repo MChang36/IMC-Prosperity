@@ -31,7 +31,7 @@ class Trader:
             self.history[product].setdefault("ASK",[]).append(ask_hist)
         
             # Calc average of up to last 10 timestamps
-            lookback = 30
+            lookback = 100
             bid_sample = self.history[product]["BID"][-lookback:]
             bid_exp = statistics.mean([item for sublist in bid_sample for item in sublist])
             ask_sample = self.history[product]["ASK"][-lookback:]
@@ -69,9 +69,9 @@ class Trader:
                 best_ask = ask.pop(0)
                 best_vol = ask_volumes.pop(0)
                 limit += best_vol
-            # if limit > 0:
-            #     print("BUY", str(limit)+"x", math.ceil(expectations[product][1]-1))
-            #     orders.append(Order(product, math.ceil(expectations[product][1]-1), limit))
+            if limit > 0:
+                print("BUY", str(limit)+"x", 0.8*expectations[product][1])
+                orders.append(Order(product, 0.8*expectations[product][1], limit))
 
             #sell
             bid = sorted([price for price in order_depth.buy_orders.keys() if price > expectations[product][0]])
@@ -91,9 +91,9 @@ class Trader:
                 best_bid = bid.pop(0)
                 best_vol = bid_volumes.pop(0)
                 limit += best_vol
-            # if limit > 0:
-            #     print("SELL", str(limit)+"x", math.floor(expectations[product][1]+1))
-            #     orders.append(Order(product, math.floor(expectations[product][1]+1), -limit))
+            if limit > 0:
+                print("SELL", str(limit)+"x", 1.2*expectations[product][1])
+                orders.append(Order(product, 1.2*expectations[product][1], -limit))
 
             result[product] = orders
         return result
