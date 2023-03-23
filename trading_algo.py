@@ -36,10 +36,11 @@ class Trader:
             self.history[product].append(statistics.median(bid_hist+ask_hist))
             
             # Calc average of up to last 10 timestamps
-            lookback = 100
+            lookback = 30
             sample = self.history[product][-lookback:]
-            expectations[product] = statistics.mean(sample)
-            
+            sma = statistics.mean(sample)
+            std = statistics.stdev(sample)
+            expectations[product] = (sma-2*std,sma+2*std)
         return expectations
 
     def run(self, state: TradingState) -> Dict[str, List[Order]]:
@@ -54,7 +55,7 @@ class Trader:
                 print("Position:", product, state.position[product])
 
             # buy
-            ask = sorted([price for price in order_depth.sell_orders.keys() if price < expectations[product]])
+            ask = sorted([price for price in order_depth.sell_orders.keys() if price < expectations[product][0]])
             ask_volumes = [order_depth.sell_orders[price] for price in ask]
             if product in state.position.keys():
                 limit = self.limits[product] - state.position[product]
@@ -72,11 +73,11 @@ class Trader:
                 best_vol = ask_volumes.pop(0)
                 limit += best_vol
             if limit > 0:
-                print("BUY", str(limit)+"x", product, 0.9*expectations[product])
-                orders.append(Order(product, 0.9*expectations[product], limit))
+                print("BUY", str(limit)+"x", product, expectations[product][0])
+                orders.append(Order(product, expectations[product][0], limit))
 
             #sell
-            bid = sorted([price for price in order_depth.buy_orders.keys() if price > expectations[product]])
+            bid = sorted([price for price in order_depth.buy_orders.keys() if price > expectations[product][1]])
             bid_volumes = [order_depth.buy_orders[price] for price in bid]
             if product in state.position.keys():
                 limit = self.limits[product] + state.position[product]
@@ -94,8 +95,8 @@ class Trader:
                 best_vol = bid_volumes.pop(0)
                 limit -= best_vol
             if limit > 0:
-                print("SELL", str(limit)+"x", product, 1.1*expectations[product])
-                orders.append(Order(product, 1.1*expectations[product], -limit))
+                print("SELL", str(limit)+"x", product, expectations[product][1])
+                orders.append(Order(product, expectations[product][1], -limit))
 
             result[product] = orders
         return result
