@@ -65,7 +65,7 @@ class Trader:
         orders += self.sell(state, product, order_depth, ub)[0]
         return orders
     
-    def sell(self, state, product, depth, ub, market_making=True):
+    def sell(self, state, product, depth, ub, lim=float('inf')):
         orders = []
         bid = sorted([price for price in depth.buy_orders.keys() if price > ub])
         bid_volumes = [depth.buy_orders[price] for price in bid]
@@ -74,6 +74,7 @@ class Trader:
             limit = self.limits[product] + state.position[product]
         else:
             limit = self.limits[product]
+        limit = min(limit, lim)
         while len(bid) > 0:
             if limit - bid_volumes[0] > 0:
                 print("SELL", str(bid_volumes[0])+"x", product, bid[0])
@@ -92,7 +93,7 @@ class Trader:
             vol = limit
         return orders, vol
     
-    def buy(self, state, product, depth, lb, market_making=True):
+    def buy(self, state, product, depth, lb, lim=float('inf')):
         orders = []
         ask = sorted([price for price in depth.sell_orders.keys() if price < lb])
         ask_volumes = [depth.sell_orders[price] for price in ask]
@@ -101,6 +102,7 @@ class Trader:
             limit = self.limits[product] - state.position[product]
         else:
             limit = self.limits[product]
+        limit = min(limit, lim)
         while len(ask) > 0:
             if limit + ask_volumes[0] > 0:
                 print("BUY", str(-ask_volumes[0])+"x", product, ask[0])
@@ -111,8 +113,8 @@ class Trader:
                 orders.append(Order(product, ask[0], limit))
             best_ask = ask.pop(0)
             best_vol = ask_volumes.pop(0)
-            vol += abs(best_vol)
             limit += best_vol
+            vol += abs(best_vol)
         if limit > 0:
             print("BUY", str(limit)+"x", product, lb)
             orders.append(Order(product, lb, limit))
@@ -127,10 +129,10 @@ class Trader:
         if math.isnan(lb) or math.isnan(ub):
             return orders_1, orders_2
         if self.spread_history[product][-1] > ub:
-            (order, first_pos) = self.sell(state, product2, depth_2, self.history[product2][-1], False)
+            (order, first_pos) = self.sell(state, product2, depth_2, self.history[product2][-1])
             orders_2 += order
         elif self.spread_history[product][-1] < lb:
-            (order, first_pos) = self.buy(state, product2, depth_2, self.history[product2][-1], False)
+            (order, first_pos) = self.buy(state, product2, depth_2, self.history[product2][-1])
             orders_2 += order
         elif self.spread_history[product][-1] >= lb and self.spread_history[product][-1] <= ub and product2 in state.position.keys():
             if state.position[product2] > 0:
@@ -144,11 +146,9 @@ class Trader:
         
         sec_pos = round(-hedge*first_pos)
         if sec_pos > 0:
-            print("BUY", str(sec_pos)+"x", product1, self.history[product1][-1])
-            orders_1.append(Order(product1, self.history[product1][-1], sec_pos))
+            orders_1 += self.buy(state, product1, depth_1, self.history[product1][-1], lim=sec_pos)[0]
         elif sec_pos < 0:
-            print("SELL", str(sec_pos)+"x", product1, self.history[product1][-1])
-            orders_1.append(Order(product1, self.history[product1][-1], sec_pos))
+            orders_1 += self.sell(state, product1, depth_1, self.history[product1][-1], lim=abs(sec_pos))[0]
 
         return orders_1, orders_2
 
