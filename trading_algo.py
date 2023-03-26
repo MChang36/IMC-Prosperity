@@ -8,16 +8,22 @@ import statistics
 class Trader:
     
     def __init__(self):
-        self.products = ["PEARLS", "BANANAS", "COCONUTS:PINA_COLADAS"]
-        self.history = {"PEARLS": [], "BANANAS": [], "COCONUTS": [], "PINA_COLADAS": []}
+        self.products = ["PEARLS", "BANANAS", 
+                         "COCONUTS:PINA_COLADAS", 
+                         "BERRIES", "DIVING_GEAR"] #
+        self.history = {"PEARLS": [], "BANANAS": [],
+                        "COCONUTS": [], "PINA_COLADAS": [],
+                        "BERRIES": [], "DIVING_GEAR": [], "DOLPHIN_SIGHTINGS": []}
         self.spread_history = {"COCONUTS:PINA_COLADAS": []}
-        self.limits = {"PEARLS": 20, "BANANAS": 20, "COCONUTS": 600, "PINA_COLADAS": 300}
+        self.limits = {"PEARLS": 20, "BANANAS": 20,
+                        "COCONUTS": 600, "PINA_COLADAS": 300,
+                        "BERRIES": 250, "DIVING_GEAR": 50}
         self.types = {"stationary": ["PEARLS"], 
-                      "trend": ["BANANAS"], 
-                      "pair": ["COCONUTS:PINA_COLADAS"]}
+                      "trend": ["BANANAS", "COCONUTS", "PINA_COLADAS", "BERRIES", "DIVING_GEAR"], 
+                      "pair": ["COCONUTS:PINA_COLADAS"]} #
     
     def update_hist(self, state: TradingState):
-        for product in state.listings.keys():
+        for product in self.products:
             ask_hist = []
             bid_hist = []
             # Update histories
@@ -56,16 +62,52 @@ class Trader:
                 std = statistics.stdev(sample) if len(sample) > 1 else 0
                 expectations[product] = (sma-2*std,sma+2*std)
         return expectations
-
-    def stationary_good(self, state, product, order_depth, lb, ub):
-        orders = []
-        #buy
-        orders += self.buy(state, product, order_depth, lb)[0]
-        #sell
-        orders += self.sell(state, product, order_depth, ub)[0]
-        return orders
     
-    def sell(self, state, product, depth, ub, lim=float('inf')):
+    def momentum_difference(self, product, rate=10):
+        if len(self.history[product]) < rate + 4:
+            return False
+        a = self.history[product][-1] - self.history[product][-rate-1]
+        b = self.history[product][-2] - self.history[product][-rate-2]
+        return abs(a + b) != abs(a) + abs(b)
+    
+    def momentum_slopes(self, product, rate=10, num_slopes=10):
+        slope_lst=[]
+        hist = self.history[product]
+        if len(hist) < rate+2:
+            return slope_lst
+        for i in range(num_slopes):
+            if len(hist) == rate + 1 + i:
+                break
+            slope_lst.append(hist[-i-1] - hist[-rate-i-1])
+        return slope_lst
+    
+    def avg_momentum_slopes(self, product, rate, num_slopes):
+        momentum_slopes = self.momentum_slopes(product, rate, num_slopes)
+        if momentum_slopes == []:
+            return momentum_slopes
+        return statistics.mean(momentum_slopes)
+    
+    def cross_method(self, product, rate, num_slopes):
+        if self.momentum_difference(product, rate):
+            if self.avg_momentum_slopes(product, rate, num_slopes) < 0:
+                return "SELL"
+            if self.avg_momentum_slopes(product, rate, num_slopes) > 0:
+                return "BUY"
+        return "NONE"
+    
+    def divergent_method(self, product, rate):
+        # average price slope
+        x = np.linspace(0,rate-1,num=rate)
+        slope = np.polyfit(x, self.history[product][-rate:], 1)[0]
+        # average momentum slope
+        m_slopes = self.avg_momentum_slopes(product, rate, rate)
+        if m_slopes < 0 and slope > 0:
+            return "SELL"
+        if m_slopes > 0 and slope < 0:
+            return "BUY"
+        return "NONE"
+
+    def sell(self, state, product, depth, ub, lim=float('inf'), market_making=True):
         orders = []
         bid = sorted([price for price in depth.buy_orders.keys() if price > ub])
         bid_volumes = [depth.buy_orders[price] for price in bid]
@@ -87,13 +129,13 @@ class Trader:
             best_vol = bid_volumes.pop(0)
             limit -= best_vol
             vol += abs(best_vol)
-        if limit > 0:
+        if market_making and limit > 0:
             print("SELL", str(limit)+"x", product, ub)
             orders.append(Order(product, ub, -limit))
             vol = limit
         return orders, vol
     
-    def buy(self, state, product, depth, lb, lim=float('inf')):
+    def buy(self, state, product, depth, lb, lim=float('inf'), market_making=True):
         orders = []
         ask = sorted([price for price in depth.sell_orders.keys() if price < lb])
         ask_volumes = [depth.sell_orders[price] for price in ask]
@@ -115,11 +157,33 @@ class Trader:
             best_vol = ask_volumes.pop(0)
             limit += best_vol
             vol += abs(best_vol)
-        if limit > 0:
+        if market_making and limit > 0:
             print("BUY", str(limit)+"x", product, lb)
             orders.append(Order(product, lb, limit))
             vol = limit
         return orders, vol
+
+    def stationary_good(self, state, product, order_depth, lb, ub):
+        orders = []
+        #buy
+        orders += self.buy(state, product, order_depth, lb)[0]
+        #sell
+        orders += self.sell(state, product, order_depth, ub)[0]
+        return orders
+    
+    def trending_good(self, state, product, order_depth, lb, ub, rt=10):
+        orders = []
+        if len(self.history[product]) < rt+3:
+            orders += self.buy(state, product, order_depth, lb, market_making=False)[0]
+            orders += self.sell(state, product, order_depth, ub, market_making=False)[0]
+            return orders
+        #buy
+        if self.divergent_method(product, rate=rt) == "BUY":
+            orders += self.buy(state, product, order_depth, lb, market_making=False)[0]
+        #sell
+        elif self.divergent_method(product, rate=rt) == "SELL":
+            orders += self.sell(state, product, order_depth, ub, market_making=False)[0]
+        return orders
     
     def paired_goods(self, state, product, product1, product2, depth_1, depth_2, lb, ub, hedge):
         # price taking in account order depth
@@ -170,8 +234,11 @@ class Trader:
             if product in state.position.keys():
                 print("Position:", product, state.position[product])
 
-            if product in self.types["stationary"] or product in self.types["trend"]:
+            if product in self.types["stationary"]:
                 orders = self.stationary_good(state, product, order_depth, expectations[product][0], expectations[product][1])
+                result[product] = orders
+            elif product in self.types["trend"]:
+                orders = self.trending_good(state, product, order_depth, expectations[product][0], expectations[product][1])
                 result[product] = orders
             elif product in self.types["pair"]:
                 product1 = product.split(":")[0]
