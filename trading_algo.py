@@ -20,45 +20,55 @@ class Trader:
                         "BERRIES": 250, "DIVING_GEAR": 50}
         self.types = {"stationary": ["PEARLS"], 
                       "trend": ["BANANAS", "COCONUTS", "PINA_COLADAS", "BERRIES", "DIVING_GEAR"], 
-                      "pair": ["COCONUTS:PINA_COLADAS"]} #
+                      "pair": ["COCONUTS:PINA_COLADAS"],
+                      "observation": ["DOLPHIN_SIGHTINGS"]} #
     
     def update_hist(self, state: TradingState):
-        for product in self.products:
-            ask_hist = []
-            bid_hist = []
-            # Update histories
-            order_depth = state.order_depths[product]
-            for price in order_depth.sell_orders:
-                ask_hist.append([price]*abs(order_depth.sell_orders[price]))
-            ask_hist = [item for sublist in ask_hist for item in sublist]
-            for price in order_depth.buy_orders:
-                bid_hist.append([price]*order_depth.buy_orders[price])
-            bid_hist = [item for sublist in bid_hist for item in sublist]
+        for product in self.history:
+            if product in self.types["observation"]:
+                self.history[product].append(state.observations[product])
+            else:
+                ask_hist = []
+                bid_hist = []
+                # Update histories
+                order_depth = state.order_depths[product]
+                for price in order_depth.sell_orders:
+                    ask_hist.append([price]*abs(order_depth.sell_orders[price]))
+                ask_hist = [item for sublist in ask_hist for item in sublist]
+                for price in order_depth.buy_orders:
+                    bid_hist.append([price]*order_depth.buy_orders[price])
+                bid_hist = [item for sublist in bid_hist for item in sublist]
             
-            self.history[product].append(statistics.median(bid_hist+ask_hist))
-
-    def calc_expected(self):
+                self.history[product].append(statistics.median(bid_hist+ask_hist))
+                
+    def calc_expected(self, state):
         expectations = {}
         for product in self.products:
             # Calc average of up to last 30 timestamps
-            lookback = 30
             # if pair trading
             if ":" in product:
                 product1 = product.split(":")[0]
                 product2 = product.split(":")[1]
+                lookback = 60
                 prod1 = np.array(self.history[product1])[-lookback:]
                 prod2 = np.array(self.history[product2])[-lookback:]
-                hedge_ratio = 1 if len(prod1) < 2 else np.corrcoef(prod1, prod2)[1, 0] * np.std(prod2) / np.std(prod1)
+                minsize = min(len(prod1), len(prod2))
+                if minsize < 2:
+                    break
+                prod1 =  prod1[-minsize:]
+                prod2 = prod2[-minsize:]
+                hedge_ratio = np.corrcoef(prod1, prod2)[1, 0] * np.std(prod1) / np.std(prod2)
                 print("HEDGE:", hedge_ratio)
-                spread = prod2[-1] - prod1[-1] * hedge_ratio
+                spread = prod1[-1] - prod2[-1] * hedge_ratio
                 self.spread_history[product].append(spread)
                 sample = self.spread_history[product][-lookback:]
                 spread_sma = statistics.mean(sample)
-                spread_std = statistics.stdev(sample) if len(sample) > 1 else 0
+                spread_std = statistics.stdev(sample)
                 expectations[product] = (spread_sma-2*spread_std, spread_sma+2*spread_std, hedge_ratio)
             else:
+                lookback = 30
                 sample = self.history[product][-lookback:]
-                sma = statistics.mean(sample)
+                sma = statistics.mean(sample) if len(sample) > 1 else 0
                 std = statistics.stdev(sample) if len(sample) > 1 else 0
                 expectations[product] = (sma-2*std,sma+2*std)
         return expectations
@@ -171,7 +181,7 @@ class Trader:
         orders += self.sell(state, product, order_depth, ub)[0]
         return orders
     
-    def trending_good(self, state, product, order_depth, lb, ub, rt=10):
+    def trending_good(self, state, product, order_depth, lb, ub, rt=30):
         orders = []
         if len(self.history[product]) < rt+3:
             orders += self.buy(state, product, order_depth, lb, market_making=False)[0]
@@ -193,36 +203,36 @@ class Trader:
         if math.isnan(lb) or math.isnan(ub):
             return orders_1, orders_2
         if self.spread_history[product][-1] > ub:
-            (order, first_pos) = self.sell(state, product2, depth_2, self.history[product2][-1])
-            orders_2 += order
+            (order, first_pos) = self.sell(state, product1, depth_1, self.history[product1][-1])
+            orders_1 += order
         elif self.spread_history[product][-1] < lb:
-            (order, first_pos) = self.buy(state, product2, depth_2, self.history[product2][-1])
-            orders_2 += order
+            (order, first_pos) = self.buy(state, product1, depth_1, self.history[product1][-1])
+            orders_1 += order
         elif self.spread_history[product][-1] >= lb and self.spread_history[product][-1] <= ub and product2 in state.position.keys():
-            if state.position[product2] > 0:
-                first_pos = -state.position[product2]
-                print("SELL", str(state.position[product2])+"x", product2, self.history[product2][-1])
-                orders_2.append(Order(product2, self.history[product2][-1], first_pos))
-            elif state.position[product2] < 0:
-                first_pos = state.position[product2]
-                print("BUY", str(state.position[product2])+"x", product2, self.history[product2][-1])
-                orders_2.append(Order(product2, self.history[product2][-1], first_pos))
+            if state.position[product1] > 0:
+                first_pos = -state.position[product1]
+                print("SELL", str(state.position[product1])+"x", product1, self.history[product1][-1])
+                orders_2.append(Order(product1, self.history[product1][-1], first_pos))
+            elif state.position[product1] < 0:
+                first_pos = state.position[product1]
+                print("BUY", str(state.position[product1])+"x", product1, self.history[product1][-1])
+                orders_2.append(Order(product1, self.history[product1][-1], first_pos))
         
         sec_pos = round(-hedge*first_pos)
         if sec_pos > 0:
-            orders_1 += self.buy(state, product1, depth_1, self.history[product1][-1], lim=sec_pos)[0]
+            orders_2 += self.buy(state, product2, depth_2, self.history[product2][-1], lim=sec_pos)[0]
         elif sec_pos < 0:
-            orders_1 += self.sell(state, product1, depth_1, self.history[product1][-1], lim=abs(sec_pos))[0]
+            orders_2 += self.sell(state, product2, depth_2, self.history[product2][-1], lim=abs(sec_pos))[0]
 
         return orders_1, orders_2
 
     def run(self, state: TradingState) -> Dict[str, List[Order]]:
         result = {}
         self.update_hist(state)
-        expectations = self.calc_expected()
+        expectations = self.calc_expected(state)
         print(expectations)
 
-        for product in self.products:
+        for product in expectations:
             if ":" in product:
                 product1 = product.split(":")[0]
                 product2 = product.split(":")[1]
