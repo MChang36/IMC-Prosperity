@@ -40,7 +40,7 @@ class Trader:
                 bid_hist = [item for sublist in bid_hist for item in sublist]
             
                 self.history[product].append(statistics.median(bid_hist+ask_hist))
-                
+
     def calc_expected(self, state):
         expectations = {}
         for product in self.products:
@@ -66,14 +66,17 @@ class Trader:
                 spread_std = statistics.stdev(sample)
                 expectations[product] = (spread_sma-2*spread_std, spread_sma+2*spread_std, hedge_ratio)
             else:
-                lookback = 30
+                if product in self.types["stationary"]:
+                    lookback = 60
+                elif product in self.types["trend"]:
+                    lookback = 10
                 sample = self.history[product][-lookback:]
                 sma = statistics.mean(sample) if len(sample) > 1 else 0
                 std = statistics.stdev(sample) if len(sample) > 1 else 0
                 expectations[product] = (sma-2*std,sma+2*std)
         return expectations
     
-    def momentum_difference(self, product, rate=10):
+    def momentum_difference(self, product, rate):
         if len(self.history[product]) < rate + 4:
             return False
         a = self.history[product][-1] - self.history[product][-rate-1]
@@ -181,7 +184,7 @@ class Trader:
         orders += self.sell(state, product, order_depth, ub)[0]
         return orders
     
-    def trending_good(self, state, product, order_depth, lb, ub, rt=30):
+    def trending_good(self, state, product, order_depth, lb, ub, rt=10):
         orders = []
         if len(self.history[product]) < rt+3:
             orders += self.buy(state, product, order_depth, lb, market_making=False)[0]
