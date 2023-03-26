@@ -14,6 +14,13 @@ class Trader:
         self.history = {"PEARLS": [], "BANANAS": [],
                         "COCONUTS": [], "PINA_COLADAS": [],
                         "BERRIES": [], "DIVING_GEAR": [], "DOLPHIN_SIGHTINGS": []}
+        self.true_range = {"PEARLS": [], "BANANAS": [],
+                        "COCONUTS": [], "PINA_COLADAS": [],
+                        "BERRIES": [], "DIVING_GEAR": [], "DOLPHIN_SIGHTINGS": []}
+        self.time_period = 0
+        self.ema_history = {"PEARLS": [], "BANANAS": [],
+                    "COCONUTS": [], "PINA_COLADAS": [],
+                    "BERRIES": [], "DIVING_GEAR": [], "DOLPHIN_SIGHTINGS": []}
         self.spread_history = {"COCONUTS:PINA_COLADAS": []}
         self.limits = {"PEARLS": 20, "BANANAS": 20,
                         "COCONUTS": 600, "PINA_COLADAS": 300,
@@ -40,6 +47,21 @@ class Trader:
                 bid_hist = [item for sublist in bid_hist for item in sublist]
             
                 self.history[product].append(statistics.median(bid_hist+ask_hist))
+
+                # Update true range
+                order_depth = state.order_depths[product]
+                today_prices = list(order_depth.sell_orders) + list(order_depth.buy_orders)
+                high = max(today_prices)
+                low = min(today_prices)
+                close_prev = self.history[product][-1] if len(self.history[product]) > 0 else 0
+
+                self.true_range[product].append(max([(high - low), abs(high - close_prev), abs(low - close_prev)]))
+
+                #Update time period
+                lengths = []
+                for lst in self.history.values():
+                    lengths.append(len(lst))
+                self.time_period = min(lengths)
 
     def calc_expected(self, state):
         expectations = {}
@@ -70,10 +92,23 @@ class Trader:
                     lookback = 60
                 elif product in self.types["trend"]:
                     lookback = 10
-                sample = self.history[product][-lookback:]
-                sma = statistics.mean(sample) if len(sample) > 1 else 0
-                std = statistics.stdev(sample) if len(sample) > 1 else 0
-                expectations[product] = (sma-2*std,sma+2*std)
+                if product == "DIVING_GEAR":
+                    sample = self.history[product][-20:]
+                    sma = statistics.mean(sample)
+                    if len(self.ema_history[product]) == 0:
+                        self.ema_history[product].append(sma)
+                        ema = sma
+                    else:
+                        k = (2.0 / (self.time_period + 1.0))
+                        ema = self.history[product][-1] * k + self.ema_history[product][-1] * (1 - k)
+                        self.ema_history[product].append(ema)
+                    atr = statistics.mean(self.true_range[product][-20:])
+                    expectations[product] = (ema-2*atr,ema+2*atr)
+                else:
+                    sample = self.history[product][-lookback:]
+                    sma = statistics.mean(sample) if len(sample) > 1 else 0
+                    std = statistics.stdev(sample) if len(sample) > 1 else 0
+                    expectations[product] = (sma-2*std,sma+2*std)
         return expectations
     
     def momentum_difference(self, product, rate):
