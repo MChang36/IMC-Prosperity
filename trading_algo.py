@@ -10,18 +10,32 @@ class Trader:
     def __init__(self):
         self.products = ["PEARLS", "BANANAS", 
                          "COCONUTS:PINA_COLADAS", 
-                         "BERRIES", "DIVING_GEAR"] #
+                         "BERRIES", 
+                         "DIP:PICNIC_BASKET", "UKULELE:BAGUETTE"] #"DIVING_GEAR",
         self.history = {"PEARLS": [], "BANANAS": [],
                         "COCONUTS": [], "PINA_COLADAS": [],
-                        "BERRIES": [], "DIVING_GEAR": [], "DOLPHIN_SIGHTINGS": []}
-        self.spread_history = {"COCONUTS:PINA_COLADAS": []}
+                        "BERRIES": [], "DIVING_GEAR": [], "DOLPHIN_SIGHTINGS": [],
+                        "DIP": [], "BAGUETTE": [], "PICNIC_BASKET": [], "UKULELE": []}
+        self.true_range = {"PEARLS": [], "BANANAS": [],
+                        "COCONUTS": [], "PINA_COLADAS": [],
+                        "BERRIES": [], "DIVING_GEAR": [], "DOLPHIN_SIGHTINGS": [], "DIP": [], 
+                         "BAGUETTE": [], "PICNIC_BASKET": [], "UKULELE": []}
+        self.time_period = 0
+        self.ema_history = {"PEARLS": [], "BANANAS": [],
+                    "COCONUTS": [], "PINA_COLADAS": [],
+                    "BERRIES": [], "DIVING_GEAR": [], "DOLPHIN_SIGHTINGS": [],
+                    "DIP": [], "BAGUETTE": [], "PICNIC_BASKET": [], "UKULELE": []}
+        self.spread_history = {"COCONUTS:PINA_COLADAS": [],
+                               "DIP:PICNIC_BASKET": [], "UKULELE:BAGUETTE": []}
         self.limits = {"PEARLS": 20, "BANANAS": 20,
                         "COCONUTS": 600, "PINA_COLADAS": 300,
-                        "BERRIES": 250, "DIVING_GEAR": 50}
-        self.types = {"stationary": ["PEARLS"], 
-                      "trend": ["BANANAS", "COCONUTS", "PINA_COLADAS", "BERRIES", "DIVING_GEAR"], 
-                      "pair": ["COCONUTS:PINA_COLADAS"],
-                      "observation": ["DOLPHIN_SIGHTINGS"]} #
+                        "BERRIES": 250, "DIVING_GEAR": 50, "DIP": 300, 
+                         "BAGUETTE": 150, "PICNIC_BASKET": 70, "UKULELE": 70}
+        self.types = {"stationary": ["PEARLS", "COCONUTS", "PINA_COLADAS"], 
+                      "trend": ["BANANAS", "BERRIES", "DIVING_GEAR"], 
+                      "pair": ["COCONUTS:PINA_COLADAS",
+                               "DIP:PICNIC_BASKET", "UKULELE:BAGUETTE"],
+                      "observation": ["DOLPHIN_SIGHTINGS"]} 
     
     def update_hist(self, state: TradingState):
         for product in self.history:
@@ -40,6 +54,21 @@ class Trader:
                 bid_hist = [item for sublist in bid_hist for item in sublist]
             
                 self.history[product].append(statistics.median(bid_hist+ask_hist))
+
+                # Update true range
+                order_depth = state.order_depths[product]
+                today_prices = list(order_depth.sell_orders) + list(order_depth.buy_orders)
+                high = max(today_prices)
+                low = min(today_prices)
+                close_prev = self.history[product][-1] if len(self.history[product]) > 0 else 0
+
+                self.true_range[product].append(max([(high - low), abs(high - close_prev), abs(low - close_prev)]))
+
+                #Update time period
+                lengths = []
+                for lst in self.history.values():
+                    lengths.append(len(lst))
+                self.time_period = min(lengths)
 
     def calc_expected(self, state):
         expectations = {}
@@ -70,10 +99,23 @@ class Trader:
                     lookback = 60
                 elif product in self.types["trend"]:
                     lookback = 10
-                sample = self.history[product][-lookback:]
-                sma = statistics.mean(sample) if len(sample) > 1 else 0
-                std = statistics.stdev(sample) if len(sample) > 1 else 0
-                expectations[product] = (sma-2*std,sma+2*std)
+                if product == "DIVING_GEAR":
+                    sample = self.history[product][-20:]
+                    sma = statistics.mean(sample)
+                    if len(self.ema_history[product]) == 0:
+                        self.ema_history[product].append(sma)
+                        ema = sma
+                    else:
+                        k = (2.0 / (self.time_period + 1.0))
+                        ema = self.history[product][-1] * k + self.ema_history[product][-1] * (1 - k)
+                        self.ema_history[product].append(ema)
+                    atr = statistics.mean(self.true_range[product][-20:])
+                    expectations[product] = (ema-2*atr,ema+2*atr)
+                else:
+                    sample = self.history[product][-lookback:]
+                    sma = statistics.mean(sample) if len(sample) > 1 else 0
+                    std = statistics.stdev(sample) if len(sample) > 1 else 0
+                    expectations[product] = (sma-2*std,sma+2*std)
         return expectations
     
     def momentum_difference(self, product, rate):
@@ -119,6 +161,22 @@ class Trader:
         if m_slopes > 0 and slope < 0:
             return "BUY"
         return "NONE"
+
+    # def macd_position(self, product: str, span_1: int = 12, span_2: int = 26) -> str:
+    #     mid_price_df = pd.DataFrame(self.history[product], columns = ['mid_prices'])
+    #     ema12 = mid_price_df['mid_prices'].ewm(span=span_1, adjust=False).mean()
+    #     ema26 = mid_price_df['mid_prices'].ewm(span=span_2, adjust=False).mean()
+    #     macd = ema12 - ema26
+    #     signal = macd.ewm(span=9, adjust=False).mean()
+    #     position = 0
+    #     for i in range(1, len(mid_price_df)):
+    #         if macd[i] > signal[i] and macd[i-1] <= signal[i-1]:
+    #             # Enter a long position
+    #             position = "BUY"
+    #         elif macd[i] < signal[i] and macd[i-1] >= signal[i-1]:
+    #             # Exit the long position
+    #             position = "SELL"
+    #     return position
 
     def sell(self, state, product, depth, ub, lim=float('inf'), market_making=True):
         orders = []
@@ -197,6 +255,7 @@ class Trader:
         elif self.divergent_method(product, rate=rt) == "SELL":
             orders += self.sell(state, product, order_depth, ub, market_making=False)[0]
         return orders
+        
     
     def paired_goods(self, state, product, product1, product2, depth_1, depth_2, lb, ub, hedge):
         # price taking in account order depth
@@ -256,7 +315,8 @@ class Trader:
             elif product in self.types["pair"]:
                 product1 = product.split(":")[0]
                 product2 = product.split(":")[1]
-                orders_1, orders_2 = self.paired_goods(state, product, product1, product2, depth_1, depth_2, expectations[product][0], expectations[product][1], expectations[product][2])
+                orders_1, orders_2 = self.paired_goods(state, product, product1, product2, depth_1, depth_2,
+                                                        expectations[product][0], expectations[product][1], expectations[product][2])
                 result[product1] = orders_1
                 result[product2] = orders_2
             
