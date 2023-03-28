@@ -10,23 +10,29 @@ class Trader:
     def __init__(self):
         self.products = ["PEARLS", "BANANAS", 
                          "COCONUTS:PINA_COLADAS", 
-                         "BERRIES", "DIVING_GEAR"] #
+                         "BERRIES", "DIVING_GEAR", "DIP", 
+                         "BAGUETTE", "PICNIC_BASKET", "UKULELE"] #
         self.history = {"PEARLS": [], "BANANAS": [],
                         "COCONUTS": [], "PINA_COLADAS": [],
-                        "BERRIES": [], "DIVING_GEAR": [], "DOLPHIN_SIGHTINGS": []}
+                        "BERRIES": [], "DIVING_GEAR": [], "DOLPHIN_SIGHTINGS": [], "DIP": [], 
+                         "BAGUETTE": [], "PICNIC_BASKET": [], "UKULELE": []}
         self.true_range = {"PEARLS": [], "BANANAS": [],
                         "COCONUTS": [], "PINA_COLADAS": [],
-                        "BERRIES": [], "DIVING_GEAR": [], "DOLPHIN_SIGHTINGS": []}
+                        "BERRIES": [], "DIVING_GEAR": [], "DOLPHIN_SIGHTINGS": [], "DIP": [], 
+                         "BAGUETTE": [], "PICNIC_BASKET": [], "UKULELE": []}
         self.time_period = 0
         self.ema_history = {"PEARLS": [], "BANANAS": [],
                     "COCONUTS": [], "PINA_COLADAS": [],
-                    "BERRIES": [], "DIVING_GEAR": [], "DOLPHIN_SIGHTINGS": []}
+                    "BERRIES": [], "DIVING_GEAR": [], "DOLPHIN_SIGHTINGS": [], "DIP": [], 
+                         "BAGUETTE": [], "PICNIC_BASKET": [], "UKULELE": []}
         self.spread_history = {"COCONUTS:PINA_COLADAS": []}
         self.limits = {"PEARLS": 20, "BANANAS": 20,
                         "COCONUTS": 600, "PINA_COLADAS": 300,
-                        "BERRIES": 250, "DIVING_GEAR": 50}
-        self.types = {"stationary": ["PEARLS"], 
-                      "trend": ["BANANAS", "COCONUTS", "PINA_COLADAS", "BERRIES", "DIVING_GEAR"], 
+                        "BERRIES": 250, "DIVING_GEAR": 50, "DIP": 300, 
+                         "BAGUETTE": 150, "PICNIC_BASKET": 70, "UKULELE": 70}
+        self.types = {"stationary": ["PEARLS", "COCONUTS", "PINA_COLADAS", "DIVING_GEAR", "DIP", 
+                         "BAGUETTE", "PICNIC_BASKET", "UKULELE"], 
+                      "trend": ["BANANAS", "BERRIES"], 
                       "pair": ["COCONUTS:PINA_COLADAS"],
                       "observation": ["DOLPHIN_SIGHTINGS"]} #
     
@@ -155,6 +161,22 @@ class Trader:
             return "BUY"
         return "NONE"
 
+    def macd_position(self, product: str, span_1: int = 12, span_2: int = 26) -> str:
+        mid_price_df = pd.DataFrame(self.history[product], columns = ['mid_prices'])
+        ema12 = mid_price_df['mid_prices'].ewm(span=span_1, adjust=False).mean()
+        ema26 = mid_price_df['mid_prices'].ewm(span=span_2, adjust=False).mean()
+        macd = ema12 - ema26
+        signal = macd.ewm(span=9, adjust=False).mean()
+        position = 0
+        for i in range(1, len(mid_price_df)):
+            if macd[i] > signal[i] and macd[i-1] <= signal[i-1]:
+                # Enter a long position
+                position = "BUY"
+            elif macd[i] < signal[i] and macd[i-1] >= signal[i-1]:
+                # Exit the long position
+                position = "SELL"
+        return position
+
     def sell(self, state, product, depth, ub, lim=float('inf'), market_making=True):
         orders = []
         bid = sorted([price for price in depth.buy_orders.keys() if price > ub])
@@ -226,12 +248,13 @@ class Trader:
             orders += self.sell(state, product, order_depth, ub, market_making=False)[0]
             return orders
         #buy
-        if self.divergent_method(product, rate=rt) == "BUY":
+        if self.macd_position(product) == "BUY":
             orders += self.buy(state, product, order_depth, lb, market_making=False)[0]
         #sell
-        elif self.divergent_method(product, rate=rt) == "SELL":
+        elif self.macd_position(product) == "SELL":
             orders += self.sell(state, product, order_depth, ub, market_making=False)[0]
         return orders
+        
     
     def paired_goods(self, state, product, product1, product2, depth_1, depth_2, lb, ub, hedge):
         # price taking in account order depth
